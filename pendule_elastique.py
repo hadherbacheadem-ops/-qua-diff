@@ -9,7 +9,7 @@ distance l1 de O, corde à sa longueur naturelle l0 = l1 + l à l'instant où
 elle se tend, corde incapable de pousser (T >= 0), paroi ignorée.
 """
 import numpy as np
-from scipy.integrate import odeint
+from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
 
 # Paramètres (ordres de grandeur réalistes, à remplacer par tes valeurs)
@@ -31,7 +31,7 @@ def tension(r, rp):
     return max(0.0, k * allongement + c * rp)
 
 
-def derivees(Y, t):
+def derivees(t, Y):
     r, rp, a, ap = Y
     T = tension(r, rp)
     rpp = r * ap**2 - T / m + g * np.cos(a)
@@ -46,23 +46,37 @@ def conditions_initiales(theta):
     return [l, vi * np.cos(theta), theta, -vi * np.sin(theta) / l]
 
 
+def allongement_max(t, Y):
+    """r' passe de + à - pendant que la corde est tendue : allongement maximal."""
+    return Y[1]
+allongement_max.direction = -1
+
+
+def corde_molle(t, Y):
+    """La corde repasse à sa longueur naturelle (début d'un rebond)."""
+    return l1 + Y[0] - l0
+corde_molle.direction = -1
+
+
 def simuler(theta, t):
-    sol = odeint(derivees, conditions_initiales(theta), t, rtol=1e-10, atol=1e-10)
-    r, rp, a, ap = sol.T
+    sol = solve_ivp(derivees, (t[0], t[-1]), conditions_initiales(theta), t_eval=t,
+                    method="DOP853", rtol=1e-10, atol=1e-10,
+                    events=(allongement_max, corde_molle))
+    r, rp, a, ap = sol.y
     T = np.array([tension(ri, rpi) for ri, rpi in zip(r, rp)])
-    return r, rp, a, ap, T
+    return r, rp, a, ap, T, sol
 
 
 if __name__ == "__main__":
     t = np.linspace(0, 6, 60001)
 
     # Validation : chute verticale (theta = 0) contre la formule de la force de choc
-    *_, T_vert = simuler(0.0, t)
+    *_, T_vert, _ = simuler(0.0, t)
     f = 2 * l / l0                                       # facteur de chute
     T_th = m * g + np.sqrt((m * g)**2 + 2 * m * g * EA * f)
     print(f"theta=0  : T_max simulée = {T_vert.max():.1f} N, formule = {T_th:.1f} N")
 
-    r, rp, a, ap, T = simuler(theta0, t)
+    r, rp, a, ap, T, sol = simuler(theta0, t)
     if c == 0:
         E = (0.5 * m * (rp**2 + (r * ap)**2) - m * g * r * np.cos(a)
              + 0.5 * k * np.clip(l1 + r - l0, 0, None)**2)
@@ -70,6 +84,10 @@ if __name__ == "__main__":
     i = T.argmax()
     print(f"theta0={np.degrees(theta0):.0f}° : T_max = {T[i]:.0f} N ({T[i] / (m * g):.1f} g) "
           f"à t = {t[i]:.3f} s, allongement max = {(l1 + r - l0).max():.2f} m")
+    t_max = sol.t_events[0][0]
+    T_ev = tension(*sol.y_events[0][0][:2])
+    print(f"Événement 1er allongement max : t = {t_max:.4f} s, T = {T_ev:.0f} N")
+    print(f"Instants où la corde se détend : {np.round(sol.t_events[1], 3)}")
 
     fig, ax = plt.subplots(3, 1, sharex=True, figsize=(7, 7))
     ax[0].plot(t, r); ax[0].set_ylabel("r = OM (m)")
